@@ -60,7 +60,7 @@ def query(collection):
 	coll = db[collection]
 	chain = get_chain()
 	print_query_info()
-	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'nt_identity.v': 1, 'vdj_aa': 1}).limit(25000)
+	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'nt_identity.v': 1, 'vdj_aa': 1})
 	output = []
 	for r in results:
 		output.append([r['nt_identity']['v'], r['vdj_aa'], r['seq_id']])
