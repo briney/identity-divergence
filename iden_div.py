@@ -34,10 +34,33 @@ parser.add_argument('-n', '--no_update', dest='no_update', action='store_true', 
 args = parser.parse_args()
 
 
+class Standard(object):
+	"""docstring for Standard"""
+	def __init__(self, id, seq):
+		super(Standard, self).__init__()
+		self.id = id
+		self.seq = seq
+		
+
+
+class Seq(object):
+	"""docstring for Seq"""
+	def __init__(self, data):
+		super(Seq, self).__init__()
+		self.id = data['seq_id']
+		self.nt_identity = data['nt_identity']['v']
+		self.seq = data['vdj_aa']
+		self.scores = {}
+
+	# def align(self, standard):
+	# 	return pairwise2.align.globalxx(self.seq, standard.seq, one_alignment_only=1, score_only=1)
+
+
+
 def get_standards():
 	standards = []
 	for s in SeqIO.parse(open(args.standard, 'r'), 'fasta'):
-		standards.append([s.id, str(s.seq)])
+		standards.append(Standard(s.id, str(s.seq)))
 	return standards
 
 def get_collections():
@@ -60,11 +83,11 @@ def query(collection):
 	coll = db[collection]
 	chain = get_chain()
 	print_query_info()
-	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'nt_identity.v': 1, 'vdj_aa': 1})
-	output = []
+	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'nt_identity.v': 1, 'vdj_aa': 1}).limit(10000)
+	seqs = []
 	for r in results:
-		output.append([r['nt_identity']['v'], r['vdj_aa'], r['seq_id']])
-	return output
+		seqs.append(Seq(r))
+	return seqs
 
 def update_db(standard, scores, collection):
 	conn = MongoClient(args.ip, args.port, max_pool_size=1000)
@@ -76,46 +99,40 @@ def update_db(standard, scores, collection):
 	print_done()
 
 def identity(standard, seqs):
-	global scores
-	scores = []
+	results = []
 	print_single_standard(standard)
 	pool = Pool(processes=cpu_count())
 	for seq in seqs:
-		pool.apply_async(do_alignment, args=(seq,standard[1]), callback=log_result)
+		results.append(pool.apply_async(do_alignment, args=(seq, standard.seq)))
 	pool.close()
 	pool.join()
+	scores = [r.get() for r in results]
+	processed_seqs = []
+	for s in scores:
+		s[0].scores[standard.id] = s[1]
+		processed_seqs.append(s[0])
 	print_done()
-	return standard[0]
+	return processed_seqs
 
 def do_alignment(seq, standard):
-	identity = seq[0]
-	sequence = seq[1]
-	seq_id = seq[2]
-	score = pairwise2.align.globalxx(sequence, standard, one_alignment_only=1, score_only=1)
-	norm_score = 100 * float(score) / max(len(sequence), len(standard))
-	output = [identity, norm_score, seq_id]
-	return output
+	score = pairwise2.align.globalxx(seq.seq, standard, one_alignment_only=1, score_only=1)
+	return (seq, score)
 
 def log_result(result):
 	scores.append(result)
 
-def make_figure(standard_id, scores, collection):
+def make_figure(standard_id, seqs, collection):
 	print_fig_info()
 	fig_file = os.path.join(args.output, '{0}_{1}_{2}.pdf'.format(args.db, collection, standard_id))
-	x = [100.0 - s[0] for s in scores]
-	y = [s[1] for s in scores]
-	xmin = min(x)
+	x = [100.0 - s.nt_identity for s in seqs]
+	y = [s.scores[standard_id] for s in seqs]
 	xmax = max(x)
 	ymin = min(y)
-	# ymax = max(y)
 	# plot params
-	plt.subplots_adjust(hspace=0.95)
-	plt.subplot(111)
 	plt.hexbin(x, y, bins='log', cmap=mpl.cm.jet, mincnt=2, gridsize=100)
 	plt.title(standard_id, fontsize=18)
 	# set and label axes
-	plt.axis([xmin-2, xmax+2, ymin-2, 102])
-	# plt.gca().invert_xaxis()
+	plt.axis([-2, xmax+2, ymin-2, 102])
 	plt.xlabel('Germline divergence')
 	plt.ylabel('{0} identity'.format(standard_id))
 	# make and label the colorbar
@@ -130,7 +147,7 @@ def print_standards_info(standards):
 	print ''
 	print ''
 	print 'Found {} standard sequence(s):'.format(len(standards))
-	print ', '.join([s[0] for s in standards])
+	print ', '.join([s.id for s in standards])
 
 def print_collections_info(collections):
 	print ''
@@ -139,7 +156,7 @@ def print_collections_info(collections):
 
 def print_single_standard(standard):
 	print ''
-	print 'Standard ID: {}'.format(standard[0])
+	print 'Standard ID: {}'.format(standard.id)
 	print 'Calculating pairwise identities...'
 
 def print_single_collection(collection):
@@ -174,10 +191,10 @@ def main():
 		print_single_collection(collection)
 		seqs = query(collection)
 		for standard in standards:
-			standard_id = identity(standard, seqs)
-			make_figure(standard_id, scores, collection)
-			if not args.no_update:
-				update_db(standard_id, scores, collection)
+			seqs = identity(standard, seqs)
+			make_figure(standard.id, seqs, collection)
+			# if not args.no_update:
+			# 	update_db(standard_id, scores, collection)
 
 
 if __name__ == '__main__':
