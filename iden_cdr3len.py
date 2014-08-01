@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# filename: iden_div.py
+# filename: iden_cdr3len.py
 
 
 ###########################################################################
@@ -48,8 +48,8 @@ class Seq(object):
 	def __init__(self, data):
 		super(Seq, self).__init__()
 		self.id = data['seq_id']
-		self.nt_identity = data['nt_identity']['v']
-		self.seq = data['vdj_aa']
+		self.cdr3_len = data['cdr3_len']
+		self.seq = data['junc_aa']
 		self.scores = {}
 
 	# def align(self, standard):
@@ -83,7 +83,7 @@ def query(collection):
 	coll = db[collection]
 	chain = get_chain()
 	print_query_info()
-	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'nt_identity.v': 1, 'vdj_aa': 1})
+	results = coll.find({'chain': {'$in': chain}},{'_id': 0, 'seq_id': 1, 'cdr3_len': 1, 'junc_aa': 1})
 	seqs = []
 	for r in results:
 		seqs.append(Seq(r))
@@ -98,7 +98,7 @@ def update_db(standard, seqs, collection):
 		scores = [{'standard': s, 'score': seq.scores[s]} for s in seq.scores]
 		# for s in seq.scores:
 		# 	scores.append({'standard': s, 'score': seq.scores[s]})
-		coll.update({'seq_id': seq.id}, {'$push': {'iden_div': {'$each': scores}}})
+		coll.update({'seq_id': seq.id}, {'$push': {'iden_div': {'junction': {'$each': scores}}}})
 	print_done()
 
 def identity(standard, seqs):
@@ -119,7 +119,7 @@ def identity(standard, seqs):
 
 def do_alignment(seq, standard):
 	score = pairwise2.align.globalxx(seq.seq, standard, one_alignment_only=1, score_only=1)
-	norm_score = 100.0 * score / min(len(seq.seq), len(standard))
+	norm_score = 100.0 * score / max(len(seq.seq), len(standard))
 	return (seq, norm_score)
 
 def log_result(result):
@@ -128,17 +128,17 @@ def log_result(result):
 def make_figure(standard_id, seqs, collection):
 	print_fig_info()
 	fig_file = os.path.join(args.output, '{0}_{1}_{2}.pdf'.format(args.db, collection, standard_id))
-	x = [100.0 - s.nt_identity for s in seqs]
+	x = [s.cdr3_len for s in seqs]
 	y = [s.scores[standard_id] for s in seqs]
-	xmax = max(x)
+	# xmax = max(x)
 	ymin = min(y)
 	# plot params
-	plt.hexbin(x, y, bins='log', cmap=mpl.cm.jet, mincnt=3, gridsize=100)
+	plt.hexbin(x, y, bins='log', cmap=mpl.cm.jet, mincnt=3, gridsize=30)
 	plt.title(standard_id, fontsize=18)
 	# set and label axes
-	plt.axis([-2, xmax+2, ymin-2, 102])
-	plt.xlabel('Germline divergence')
-	plt.ylabel('{0} identity'.format(standard_id))
+	plt.axis([-0.5, 50, ymin-2, 102])
+	plt.xlabel('CDR3 length (AA)')
+	plt.ylabel('Length-adjusted CDR3 identity')
 	# make and label the colorbar
 	cb = plt.colorbar()
 	cb.set_label('Sequence count (log10)', labelpad=10)
